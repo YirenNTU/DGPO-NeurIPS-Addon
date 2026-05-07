@@ -1,0 +1,5 @@
+# Same Python packages as EveNet core: install_requires come from evenet/setup.py via:
+-e ../evenet
+
+# DGPO trainer only (not listed in evenet-core):
+ray[default]>=2.9,<3

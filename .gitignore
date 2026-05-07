@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtualenvs
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Outputs
+outputs/
+wandb/
+*.pt
+*.npz
+
+# RooUnfold local CMake build (submodule's own .gitignore handles its tree;
+# this is a safety net in case it is built one level up).
+RooUnfold/build/
+RooUnfold/build-conda/

@@ -1,0 +1,6 @@
+[submodule "EveNet-Full"]
+	path = EveNet-Full
+	url = https://github.com/EveNet-HEP/EveNet-Full.git
+[submodule "RooUnfold"]
+	path = RooUnfold
+	url = https://gitlab.cern.ch/RooUnfold/RooUnfold.git

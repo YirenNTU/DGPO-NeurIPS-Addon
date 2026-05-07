@@ -1,0 +1,261 @@
+# TT2L EveNet training layout (defaults pulled from configs/tt2l/) plus DGPO-neutrino RL add-on at the bottom.
+# default: paths are relative to this file's directory (RL/DGPO_neutrino/).
+
+platform:
+  # Materialized subset (see RL/DGPO_neutrino/data_preprocess/make_dataset_subset.py).
+  # Replace these placeholders with local TT2L Parquet directories.
+  data_parquet_dir: "/pscratch/sd/y/yiren/RL/nu2flow_dataset/DGPO/mg5_train_subset_20pct/train"
+  data_parquet_val_dir: "/pscratch/sd/y/yiren/RL/nu2flow_dataset/DGPO/mg5_train_subset_20pct/val"
+  # 4 nodes × 4 GPUs per node = 16 workers for distributed training
+  number_of_workers: 16
+  resources_per_worker: { "CPU": 15, "GPU": 1 }
+  batch_size: 256
+  prefetch_batches: 2
+  use_gpu: true
+
+  #=== LOCAL TESTING (uncomment for local) ===
+  #data_parquet_dir: "data/tt2l_dgpo/debug/train"
+  #number_of_workers: 1
+  #resources_per_worker: { "CPU": 4, "GPU": 0 }
+  #batch_size: 16
+  #prefetch_batches: 1
+  #use_gpu: false
+
+
+options:
+  default: ../../configs/tt2l/options.yaml
+
+  Training:
+    total_epochs: 150
+    epochs: 150
+    # Replace with local output and checkpoint paths before running.
+    model_checkpoint_save_path: "/pscratch/sd/y/yiren/RL/NeurIPS_reproduce/checkpoints/"
+    model_checkpoint_save_top_k: 500  # keep best 10 by val/reward/mean (EveNet uses 50)
+    # Resume DGPO training from the latest checkpoint in this run directory.
+    model_checkpoint_load_path: "/global/cfs/cdirs/m5019/yiren/NeurIPS/Paper/model_weights/base_pretrain.ckpt"
+    # First DGPO run from supervised E2E weights:
+    #model_checkpoint_load_path: "checkpoints/supervised_reference.ckpt"
+
+    # === LOCAL TESTING (uncomment for local) ===
+    # model_checkpoint_save_path: "outputs/debug/checkpoints"
+    # pretrain_model_load_path: "checkpoints/debug_reference.ckpt"
+
+    diffusion_every_n_epochs: 25 # how often to run diffusion
+    diffusion_every_n_steps: 1 # how often to run diffusion inside the valid epoch
+
+    learning_rate: &lr 0.00001
+#    learning_rate_obj: &lr_obj 0.000032
+    learning_rate_body: &lr_body 0.000001
+#    learning_rate_body: &lr_body 0.000025
+    weight_decay: &wd 0.01
+    Components:
+      GlobalEmbedding:
+        learning_rate: *lr_body
+        weight_decay: *wd
+        optimizer_type: "AdamW"
+        warm_up: true
+        freeze:
+          type: none
+      PET:
+        learning_rate: *lr_body
+        weight_decay: *wd
+        optimizer_type: "AdamW"
+        warm_up: true
+        freeze:
+          type: none
+      ObjectEncoder:
+        learning_rate: *lr_body
+        weight_decay: *wd
+        optimizer_type: "AdamW"
+        warm_up: true
+        freeze:
+          type: none
+      Classification:
+        include: false
+        include_cross_term: false
+      Regression:
+        include: false
+      Assignment:
+        include: true
+        warm_up: true
+        learning_rate: *lr
+        weight_decay: *wd
+        optimizer_type: "AdamW"
+        freeze:
+          type: none
+      GlobalGeneration:
+        include: false
+      ReconGeneration:
+        include: false
+      TruthGeneration:
+        include: true
+        warm_up: true
+        learning_rate: *lr
+        weight_decay: *wd
+        optimizer_type: "AdamW"
+        physics_informed: false
+        diffusion_steps: 100
+        cartesian: false
+        freeze:
+          type: none
+        pidm:
+          snr_clamp: 5.0        # γ for λ_t = min(SNR, γ) - data loss weight (Min-SNR-5)
+          physics_c: 10000     # c for Σ̄_t = Σ_t/c - physics variance scaling (smaller = stronger physics)
+          use_pidm_weighting: true  # whether to apply dynamic weighting
+          normalize_by_width: false  # normalize residuals by particle width (recommended)
+
+    EarlyStopping:
+      patience: 25
+      min_delta: 0.0
+      monitor: "val/loss"
+      mode: "min"
+      verbose: true
+
+    EMA:
+      enable: true               # Enable or disable EMA
+      decay: 0.999               # EMA decay rate
+      start_epoch: 0             # Start updating EMA after this epoch
+      update_every_n_steps: 1   # Update EMA every N steps
+
+      replace_model_after_load: true    # After loading checkpoint, copy EMA weights into model
+      replace_model_at_end: false         # At training end, copy EMA weights into model (will not save EMA weights)
+
+  Dataset:
+    dataset_limit: 1.0   # fraction of parquet rows to use (1.0 = full); use 1.0 with materialized subset dirs
+    normalization_file: "/pscratch/sd/y/yiren/RL/nu2flow_dataset/DGPO/mg5_train_subset_20pct/train/normalization.pt"
+    # === LOCAL TESTING (uncomment for local) ===
+    # normalization_file: "data/tt2l_dgpo/debug/train/normalization.pt"
+    # dataset_limit: 0.1   # Use 10% of data for local testing
+    val_split: [ 0.7, 1.0 ]
+
+
+network:
+#  default: configs/model.yaml
+  #  default: configs/model_large.yaml
+  default: ../../configs/tt2l/pretrain.yaml
+
+  # Disable all dropout for DGPO: current policy and reference model must
+  # produce deterministic outputs for precise log-likelihood comparison.
+  Body:
+    GlobalEmbedding:
+      dropout: 0.0
+    PET:
+      feature_drop: 0.0
+      dropout: 0.0
+      drop_probability: 0.0
+    ObjectEncoder:
+      dropout: 0.0
+  Assignment:
+    feature_drop: 0.0
+    dropout: 0.0
+  ReconGeneration:
+    feature_drop: 0.0
+    dropout: 0.0
+    drop_probability: 0.0
+  TruthGeneration:
+    feature_drop: 0.0
+    dropout: 0.0
+    drop_probability: 0.0
+
+event_info:
+  default: ../../configs/tt2l/event_info.yaml
+
+  # overwrites
+  # ...
+
+resonance:
+  default: ../../configs/tt2l/resonance.yaml
+
+  # overwrites
+  # ...
+wandb:
+  project: "nu2flow-RL"
+  entity: "ytchou97-university-of-washington"
+  name: "nu2flow-RL-NeurIPS"
+  run_name: "nu2flow-RL-NeurIPS-reproduce"
+  tags: [ "NERSC", "RL", "Neutrinos", "QE", "PIDM" ]
+logger:
+  type: "tensorboard"
+  # Optional: same shape as evenet/train.py — if ``logger.wandb.project`` is set, DGPO uses it
+  # instead of the top-level ``wandb:`` block below.
+  # wandb:
+  #   project: "my-project"
+  #   entity: null
+  #   run_name: "run-1"
+  #   tags: []
+  #   id: null
+  # === NERSC ===
+  save_dir: "/pscratch/sd/y/yiren/RL/nu2flow_DGPO_model/logs"
+  #save_dir: "/Users/yirenwu/Machine Learning Research Reasoning Model/Dataset/logs"
+  # === LOCAL TESTING (uncomment for local) ===
+  # save_dir: "/Users/yirenwu/Machine Learning Research Reasoning Model/Dataset/logs"
+  name: "nu2flow_RL"
+
+# ---------------------------------------------------------------------------
+# DGPO neutrino RL add-on.
+# ---------------------------------------------------------------------------
+
+dgpo:
+  beta: 5               # beta_dgpo: scales per-event gate M_e
+  beta_kl: 0.05                # velocity-space anchor: loss_total += resolved_KL_weight * mean(||v_theta - v_ref||^2)
+  # Main DGPO advantage normalization over K candidates.
+  advantage_transform:
+    mode: zscore
+    temperature: 1.0
+  K: 10               # candidates per event (training rollout + DGPO only)
+  validation_K: 1               # val: DDIM candidates per event (default 1: one current + optional one ref for winrate)
+  num_ddim_steps: 20           # T_sample: DDIM steps for online generation
+  shared_noise: true            # same eps, t across K during policy evaluation
+  # Replay frozen rollout data for multiple optimizer steps (reference DGPO-style inner loop).
+  num_inner_epochs: 1           # passes over the same candidates/rewards/advantages per batch
+  num_train_timesteps: 8        # fresh (t, eps) per sub-step; with accumulate_train_timesteps=true: M timesteps, one update
+  # true: backprop (loss/M) for each training timestep, then one clipped AdamW step per batch (reference DGPO-style).
+  # false: one AdamW step per (inner_epoch × timestep) sub-step (legacy; stronger updates on stale rollouts).
+  accumulate_train_timesteps: true
+  # Advantage clamp before loss (null = no clamp).
+  adv_clip_max: 5.0
+  grad_clip_norm: 1.0           # global grad norm clip (AdamW step)
+  policy_eval_t_min: 0.0        # lower bound for diffusion timestep t sampled in policy_evaluation_step
+  policy_eval_t_max: 0.7        # upper bound: avoid near-pure-noise regime where gradient signal is weak
+  use_ema_for_rollout: true     # swap rollout EMA shadow into model for Phase-1 generation, then restore trainable weights
+  update_ema_rollout: true      # keep rollout EMA updated during training
+  # Rollout EMA decay per step: decay = min(ema_rollout_decay_max, ema_rollout_decay_ramp * global_step) (Flow GRPO ema_ref style).
+  ema_rollout_decay_max: 0.3
+  ema_rollout_decay_ramp: 0.001
+  log_every: 1                  # console INFO every N optimizer steps
+  log_reward_dist_every: 5       # wandb reward/dist/overlap (3 overlaid 1D hists as wandb.Image) every N steps
+  diagnostic_profile_accumulate_steps: 10  # concatenate N train batches for stable truth-bin diagnostic profiles
+  # If true, each val batch runs one extra ref-policy DDIM for val/winrate (default off: cheaper val).
+  validation_compute_winrate: true
+  # Validation visibility (long Ray + DDIM runs are otherwise silent).
+  validation_log_batches: true       # INFO per val batch: start + DDIM wall time
+  validation_tqdm_k_chains: true    # tqdm bar over the K sequential DDIM chains per batch
+  # Optional differentiable residual anchor over a dense truth-pT interval.
+  offset_anchor:
+    enabled: true             # pT-only mean-shift correction
+    mode: pt_eta_phi_mean              # pt_mean | xyz_mean | pt_eta_phi_mean
+    lambda: 0.05
+    pt_min: 0.0
+    pt_max: 300.0
+    scale: 10.0                # explicit GeV scale
+    mu_ref: 0.0
+    scale_pt_eta_phi: [5.0, auto, auto]
+    mu_ref_pt_eta_phi: [0.0, 0.0, 0.0]
+    loss_type: mse           # huber | mse
+    min_count: 200             # min masked entries pooled into μ_theta for the anchor backward term.
+    # all_candidates is required for the unbiasedness goal: residual must be
+    # zero across the full candidate distribution, not only the reward argmax.
+    apply_to: all_candidates   # all_candidates | best_candidate (reward argmax per event); weighted_candidates reserved.
+
+reward_config:
+  # Main reward: component-normalized truth-distance in Cartesian neutrino momentum.
+  rule_based:
+    enabled: true
+    weight: 1.0
+    mode: "component_normalized_truth_distance"
+    # Scales are always loaded from normalization.pt's
+    # ``invisible_cartesian_std['Source']`` (shape (3,) ordered [px, py, pz],
+    # sample-wise std computed at preprocessing). The same px/py/pz std is
+    # applied to both neutrinos (nu1_px = nu2_px = std[0], etc.).
+    component_normalized:
+      eps: 1.0e-8

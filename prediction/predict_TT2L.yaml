@@ -1,0 +1,182 @@
+# EveNet prediction config for TT2L (template).
+#
+# Run with:
+#   python EveNet-Full/scripts/predict.py prediction/predict_TT2L.yaml
+#
+# This loads a DGPO-fine-tuned (or pretrained) checkpoint and writes a single
+# prediction `.pt` file (point-cloud tensors + the EXTRA branches listed below)
+# to <prediction.output_dir>/<prediction.filename>. That .pt is the input for
+# RL/Unfolding/run_neurips_neutrino_unfolding.py (`--model KEY=PATH`).
+#
+# Edit every "/path/to/..." below to point at host-side data / checkpoints
+# before running.
+
+platform:
+  data_parquet_dir: "/path/to/tt2l_parquet"     # input parquet directory
+  number_of_workers: 4
+  resources_per_worker: { "CPU": 15, "GPU": 1 }
+  batch_size: 1024
+  prefetch_batches: 2
+  use_gpu: true
+
+options:
+  default: ../configs/tt2l/options.yaml
+
+  prediction:
+    output_dir: "/path/to/prediction_output"    # where to write the .pt
+    filename: "prediction.pt"                   # base name (.pt suffix kept)
+    save_point_cloud: true
+    extra_save:
+      - conditions
+      - conditions_mask
+      - x_mask
+      - global_event_index
+      - EXTRA/num_bjet
+      # Reconstructed top decay products
+      - EXTRA/t1/b/pt
+      - EXTRA/t1/b/eta
+      - EXTRA/t1/b/phi
+      - EXTRA/t1/b/energy
+      - EXTRA/t1/l/pt
+      - EXTRA/t1/l/eta
+      - EXTRA/t1/l/phi
+      - EXTRA/t1/l/energy
+      - EXTRA/t2/b/pt
+      - EXTRA/t2/b/eta
+      - EXTRA/t2/b/phi
+      - EXTRA/t2/b/energy
+      - EXTRA/t2/l/pt
+      - EXTRA/t2/l/eta
+      - EXTRA/t2/l/phi
+      - EXTRA/t2/l/energy
+      # Truth-level top / W / lepton 4-vectors
+      - EXTRA/truth_t1/t/pt
+      - EXTRA/truth_t1/t/eta
+      - EXTRA/truth_t1/t/phi
+      - EXTRA/truth_t1/t/mass
+      - EXTRA/truth_t1/W/pt
+      - EXTRA/truth_t1/W/eta
+      - EXTRA/truth_t1/W/phi
+      - EXTRA/truth_t1/W/mass
+      - EXTRA/truth_t1/l/pt
+      - EXTRA/truth_t1/l/eta
+      - EXTRA/truth_t1/l/phi
+      - EXTRA/truth_t1/l/mass
+      - EXTRA/truth_t2/t/pt
+      - EXTRA/truth_t2/t/eta
+      - EXTRA/truth_t2/t/phi
+      - EXTRA/truth_t2/t/mass
+      - EXTRA/truth_t2/W/pt
+      - EXTRA/truth_t2/W/eta
+      - EXTRA/truth_t2/W/phi
+      - EXTRA/truth_t2/W/mass
+      - EXTRA/truth_t2/l/pt
+      - EXTRA/truth_t2/l/eta
+      - EXTRA/truth_t2/l/phi
+      - EXTRA/truth_t2/l/mass
+      # LHE-level partons / leptons / neutrinos
+      - EXTRA/lhe/W+
+      - EXTRA/lhe/W-
+      - EXTRA/lhe/b
+      - EXTRA/lhe/b~
+      - EXTRA/lhe/e+
+      - EXTRA/lhe/e-
+      - EXTRA/lhe/mu+
+      - EXTRA/lhe/mu-
+      - EXTRA/lhe/t
+      - EXTRA/lhe/t~
+      - EXTRA/lhe/nu(e)
+      - EXTRA/lhe/nu(e)~
+      - EXTRA/lhe/nu(mu)
+      - EXTRA/lhe/nu(mu)~
+
+  Training:
+    total_epochs: 100
+    epochs: 100
+    # Either a single .ckpt file or a directory containing *.ckpt (latest mtime is used).
+    model_checkpoint_save_path: "/path/to/checkpoints/"
+    model_checkpoint_load_path: "/path/to/checkpoints/last.ckpt"
+    pretrain_model_load_path: null
+
+    diffusion_every_n_epochs: 25
+    diffusion_every_n_steps: 1
+
+    learning_rate: &lr 0.00005
+    learning_rate_body: &lr_body 0.000005
+    weight_decay: &wd 0.01
+    Components:
+      GlobalEmbedding:
+        learning_rate: *lr_body
+        weight_decay: *wd
+        optimizer_type: "AdamW"
+      PET:
+        learning_rate: *lr_body
+        weight_decay: *wd
+        optimizer_type: "AdamW"
+      ObjectEncoder:
+        learning_rate: *lr_body
+        weight_decay: *wd
+        optimizer_type: "AdamW"
+      Classification:
+        include: false
+        include_cross_term: false
+      Regression:
+        include: false
+      Assignment:
+        include: true
+        warm_up: true
+        learning_rate: *lr
+        weight_decay: *wd
+        optimizer_type: "AdamW"
+      GlobalGeneration:
+        include: false
+      ReconGeneration:
+        include: false
+      TruthGeneration:
+        include: true
+        warm_up: true
+        learning_rate: *lr
+        weight_decay: *wd
+        optimizer_type: "AdamW"
+        physics_informed: false
+        diffusion_steps: 100
+        cartesian: false
+        # If true, log p(x0) is computed per sample at inference (best-of-K ranking).
+        sample_with_probability: false
+
+    EarlyStopping:
+      patience: 25
+      min_delta: 0.0
+      monitor: "val/loss"
+      mode: "min"
+      verbose: true
+
+    EMA:
+      enable: true
+      decay: 0.999
+      start_epoch: 0
+      update_every_n_steps: 1
+      replace_model_after_load: true   # copy EMA weights into model after loading the ckpt
+      replace_model_at_end: false
+
+  Dataset:
+    dataset_limit: 1.0
+    normalization_file: "/path/to/tt2l_parquet/normalization.pt"
+    val_split: [0.7, 1.0]
+
+
+network:
+  default: ../configs/tt2l/pretrain.yaml
+  Body:
+    PET:
+      feature_drop: 0.0
+  ReconGeneration:
+    feature_drop: 0.0
+  TruthGeneration:
+    feature_drop: 0.0
+
+event_info:
+  default: ../configs/tt2l/event_info.yaml
+
+resonance:
+  default: ../configs/tt2l/resonance.yaml
